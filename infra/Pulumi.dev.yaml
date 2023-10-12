@@ -1,0 +1,5 @@
+encryptionsalt: v1:X3i8ISevMGI=:v1:SKpTB+zmk3aQiU+I:NPQX04n6DdE9zR5X3gKo/gPphlgq4g==
+config:
+  Assignment04:instanceType: t3.micro
+  Assignment04:vpcNetworkCidr: 10.0.0.0/16
+  aws:region: us-east-1
