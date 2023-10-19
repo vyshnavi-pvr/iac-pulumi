@@ -1,0 +1,5 @@
+encryptionsalt: v1:+1RWUqZMtaU=:v1:dRCbTsnFzcnvOJcI:tpFoZMw6rtBuBa/ZGfYKXCWWBvfh7w==
+config:
+  aws:region: us-west-1
+  del-pulumi:name: dev
+  del-pulumi:vpcCidr: '24'
