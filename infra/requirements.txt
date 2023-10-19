@@ -1,5 +1,0 @@
-pulumi==3.18.1
-pulumi_aws==4.23.0
-pulumi_random==4.2.0
-ipaddress==1.0.23
-
