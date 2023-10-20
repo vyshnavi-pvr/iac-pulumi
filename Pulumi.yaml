@@ -1,6 +1,6 @@
-name: del-pulumi
+name: iac-pulumi
 runtime:
   name: python
   options:
     virtualenv: venv
-description: A minimal AWS Python Pulumi program
+description: A AWS Python Pulumi program for IaC

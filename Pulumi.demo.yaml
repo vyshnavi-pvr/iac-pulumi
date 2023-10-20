@@ -1,4 +1,4 @@
-encryptionsalt: v1:73UIz2WeL7A=:v1:8QRPGfOycv/4KYaF:C8A+B92LJcT3HJNEzj9/giWF3/Nq4A==
+encryptionsalt: v1:/V/VSRvCfZ0=:v1:qtHGaC2SfP0a+z8n:jb+nlrkfJnfm3b7tPyT9ZZqnmswmnw==
 config:
   aws:region: us-west-1
   iac-pulumi:name: dev
@@ -7,4 +7,3 @@ config:
   iac-pulumi:volume_size: 25
   iac-pulumi:volume_type: 'gp2'
   iac-pulumi:subnet_prefix_length: 24
-  # iac-pulumi:key: "ec2-deployer"
