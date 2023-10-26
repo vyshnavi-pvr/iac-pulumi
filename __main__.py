@@ -1,14 +1,16 @@
 # """An AWS Python Pulumi program"""
 
 import pulumi
-from pulumi_aws import ec2, get_availability_zones
+from pulumi_aws import ec2, get_availability_zones, iam
 import ipaddress
-from pulumi_aws import ec2, secretsmanager
+from pulumi_aws import ec2, secretsmanager,ssm
 import subprocess
 import os
+import postgres_db
 
-# ami_id = 'ami-08c92838631c75988'  
+# ami_id = 'ami-08c92838631c75988'
 
+'''======================================'''
 is_debug = False
 # # Fetch the region from pulumi config
 region = pulumi.Config("aws").require("region")
@@ -20,9 +22,14 @@ root_volume_size =int(pulumi.Config("iac-pulumi").require("volume_size"))# 25
 root_volume_type = pulumi.Config("iac-pulumi").require("volume_type")#'gp2'
 subnet_prefix_length = int(pulumi.Config("iac-pulumi").require("subnet_prefix_length"))#24
 # ec2_key_name = pulumi.Config("iac-pulumi").require("key")#"ec2-deployer"
-ec2_key_name= "ec2-deployer"
+ec2_key_name= "ec2-deployer4"
 public_subnets = []
 private_subnets = []
+
+db_user=int(pulumi.Config("iac-pulumi").require("dbuser"))
+db_pass=int(pulumi.Config("iac-pulumi").require("dbpass"))
+# db_user="csye6225"
+# db_pass="Laptop>300"
 
 # Get availability zones in the current region
 azs = get_availability_zones(state="available")
@@ -34,6 +41,15 @@ num_subnets = actual_az_count * 2
 
 
 # subnet_prefix_length = int(vpc_cidr.split("/")[1]) + num_subnets
+def get_userdata_script():
+    
+    user_data_script = """#!/bin/bash
+        
+        
+        
+        """
+    return user_data_script
+
 
 
 def calculate_subnets(vpc_cidr, subnet_prefix_length):
@@ -71,7 +87,7 @@ def createSubnets():
                                    cidr_block=public_cidr,
                                    availability_zone=az,
                                    map_public_ip_on_launch=True,
-                                   )
+                                   )        
         public_subnets.append(public_subnet)
 
         if is_debug:
@@ -89,6 +105,7 @@ def createSubnets():
                                     cidr_block=private_cidr,
                                     availability_zone=az,
                                     )
+        
         private_subnets.append(private_subnet)
 
         # Associate private subnets with the private route table
@@ -96,19 +113,62 @@ def createSubnets():
                                   subnet_id=private_subnet.id,
                                   route_table_id=private_route_table.id,
                                   )
+def getIAMInstanceRole():
 
+    # Create an IAM role
+    ec2_role = iam.Role("csye2023-instance-role",
+                        assume_role_policy="""{
+            "Version": "2012-10-17",
+            "Statement": [{
+                "Action": "sts:AssumeRole",
+                "Effect": "Allow",
+                "Sid": "",
+                "Principal": {
+                    "Service": "ec2.amazonaws.com"
+                }
+            }]
+        }"""
+                        )
+
+    # Create an instance profile
+    instance_profile = iam.InstanceProfile("csye2023-instance-role_profile",
+                                           role=ec2_role.name
+                                           )
+
+    # 2. Attach a policy to the role that grants access to Secrets Manager
+    policy = iam.Policy("csye2023-secrets-policy",
+                        description="A policy that grants access to Secrets Manager",
+                        policy=pulumi.Output.from_input({
+                            "Version": "2012-10-17",
+                            "Statement": [{
+                                "Action": [
+                                    "secretsmanager:GetSecretValue",
+                                    "secretsmanager:DescribeSecret"
+                                ],
+                                "Resource": "*",
+                                "Effect": "Allow"
+                            }]
+                        })
+                        )
+
+    # Attach the policy to the role
+    role_policy_attachment = iam.RolePolicyAttachment("secrets-policy-attachment",
+                                                      role=ec2_role.name,
+                                                      policy_arn=policy.arn
+                                                      )
+    return instance_profile
 
 def getKeyPair():
 
     print("Creating Key pair *************** ")
     key_filename = ec2_key_name
-    pub_key_secret_name = "ec2-deployer-public-key"
-    private_key_secret_name = "ec2-deployer-private-key"
+    pub_key_secret_name = "ec2-deployer-public-key5"
+    private_key_secret_name = "ec2-deployer-private-key5"
     public_key = None
     try:
 
         public_secret = secretsmanager.get_secret_version(secret_id=pub_key_secret_name)
-        private_secret = secretsmanager.get_secret_version(secret_id=pub_key_secret_name)
+        private_secret = secretsmanager.get_secret_version(secret_id=private_key_secret_name)
         # Use the apply method to print the secret value
         public_key = public_secret.secret_string
         private_key = private_secret.secret_string
@@ -135,8 +195,8 @@ def getKeyPair():
     key_pair = ec2.KeyPair(resource_name=ec2_key_name, key_name=ec2_key_name, public_key=public_key)
     pulumi.export('publicKey', key_pair.public_key)
 
-    pub_secret = secretsmanager.Secret("ec2-deployer-public-key",
-                                       name="ec2-deployer-public-keys",
+    pub_secret = secretsmanager.Secret("ec2-deployer-public-key5",
+                                       name="ec2-deployer-public-key5",
                                        description="public key for deployer EC2 key pair"
                                        )
 
@@ -145,8 +205,8 @@ def getKeyPair():
                                                   secret_string=public_key
                                                   )
 
-    private_secret = secretsmanager.Secret("ec2-deployer-private-key",
-                                           name="ec2-deployer-private-keys",
+    private_secret = secretsmanager.Secret("ec2-deployer-private-key5",
+                                           name="ec2-deployer-private-key5",
                                            description="Private key for deployer EC2 key pair"
                                            )
 
@@ -194,6 +254,29 @@ def createSecurityGroup():
         ),
     ]
 
+    egress_rules=[
+        # Allow all outbound traffic to all IP addresses on HTTP port 80
+        ec2.SecurityGroupEgressArgs(
+            protocol="tcp",
+            from_port=80,
+            to_port=80,
+            cidr_blocks=["0.0.0.0/0"]
+        ),
+        # Allow all outbound traffic to all IP addresses on HTTPS port 443
+        ec2.SecurityGroupEgressArgs(
+            protocol="tcp",
+            from_port=443,
+            to_port=443,
+            cidr_blocks=["0.0.0.0/0"]
+        ),
+        ec2.SecurityGroupEgressArgs(
+            protocol="tcp",
+            from_port=5432,
+            to_port=5432,
+            cidr_blocks=["0.0.0.0/0"]
+        )
+    ]
+
     # # Attach the ingress rules to the security group
     for ingress_rule in ingress_rules:
         ec2.SecurityGroupRule(f"application-sg-rule-{ingress_rule.from_port} ",
@@ -205,7 +288,45 @@ def createSecurityGroup():
                               cidr_blocks=ingress_rule.cidr_blocks,
                               )
 
+    for egress_rule in egress_rules:
+        ec2.SecurityGroupRule(f"application-sg-egress-rule-{egress_rule.from_port} ",
+                              security_group_id=application_security_group.id,
+                              type="egress",
+                              from_port=egress_rule.from_port,
+                              to_port=egress_rule.to_port,
+                              protocol=egress_rule.protocol,
+                              cidr_blocks=egress_rule.cidr_blocks,
+                              )
+
     return application_security_group
+
+# Define the name of the security group
+db_security_group_name = "database-security-group"
+
+def createdbSecurityGroup():
+    # Create a security group for the RDS instances
+    db_security_group = ec2.SecurityGroup(
+        db_security_group_name,
+        description="Security group for RDS instances",
+        vpc_id=vpc.id,  
+        tags={"Name": "database_security_group"},
+          
+    )
+
+    # Define the ingress rule to allow TCP traffic on port 5432 from the 'application security group'
+    db_security_group_rule = ec2.SecurityGroupRule(
+        "allow-postgres-ingress",
+        type="ingress",
+        from_port=5432,
+        to_port=5432,
+        protocol="tcp",
+        security_group_id=db_security_group.id,
+        source_security_group_id=application_security_group.id,  
+    )
+
+    
+    return db_security_group
+
 
 
 # Create a new VPC
@@ -243,8 +364,54 @@ ami_id = getLatestAMI()
 
 key_pair = getKeyPair()
 
-public_ec2_instances = []
+database_security_group = createdbSecurityGroup()
 
+db = postgres_db.Database(name="csye6225", username=db_user, password=db_pass,
+                          security_group_id=database_security_group.id, private_subnets=private_subnets)
+
+#create secrets for database properties
+
+# user_data_script = db.rds_instance.endpoint.apply(lambda host: f"""
+#                     #!/bin/bash
+#                     echo 'export DB_HOST={host}' >> /etc/environment
+#                     """)
+
+db_end_point = secretsmanager.Secret("db_end_point",
+                                   name="csye2023_db_end_point",
+                                   description="DB end point"
+                                   )
+
+pub_secret_version = secretsmanager.SecretVersion("db_end_point",
+                                                  secret_id=db_end_point.id,
+                                                  secret_string=db.rds_instance.endpoint
+                                                  )
+
+db_master_user = secretsmanager.Secret("db_master_user",
+                                     name="db_master_user",
+                                     description="DB username"
+                                     )
+
+db_user_secret_version = secretsmanager.SecretVersion("db_master_user",
+                                                  secret_id=db_master_user.id,
+                                                  secret_string=db_user
+                                                  )
+
+db_master_pass = secretsmanager.Secret("db_master_pass",
+                                       name="db_master_pass",
+                                       description="DB username"
+                                       )
+
+db_pass_secret_version = secretsmanager.SecretVersion("db_master_pass",
+                                                  secret_id=db_master_pass.id,
+                                                  secret_string=db_pass
+                                                  )
+
+
+
+'''To create EC2 instances in all public subnets'''
+public_ec2_instances = []
+instance_profile = getIAMInstanceRole()
+public_subnets = public_subnets[:1]
 for i, public_subnet in enumerate(public_subnets):
     # print(public_subnet)
     instance_name = f"public-instance-{i}"
@@ -259,9 +426,25 @@ for i, public_subnet in enumerate(public_subnets):
                                 volume_type=root_volume_type,
                                 delete_on_termination=True,
                             ),
+                            user_data=get_userdata_script(),
+                            iam_instance_profile=instance_profile.name,
                             tags={"Name": instance_name},
                             )
     public_ec2_instances.append(instance)
+
+# instance = ec2.Instance(public_subnets[0].availability_zone+"_Instance",
+#                             ami=ami_id,
+#                             key_name=key_pair.key_name,
+#                             instance_type=instance_type,
+#                             subnet_id=public_subnets[0],
+#                             vpc_security_group_ids=[application_security_group.id],
+#                             root_block_device=ec2.InstanceRootBlockDeviceArgs(
+#                                 volume_size=root_volume_size,
+#                                 volume_type=root_volume_type,
+#                                 delete_on_termination=True,
+#                             ),
+#                             tags={"Name": public_subnets[0].availability_zone+" instance"},
+#                             )
 
 # # Export VPC ID, public subnets and private subnets IDs for reference in other stacks or scripts
 pulumi.export("vpc_id", vpc.id)
@@ -269,6 +452,9 @@ pulumi.export("public_subnets_ids", [subnet.id for subnet in public_subnets])
 pulumi.export("private_subnets_ids", [subnet.id for subnet in private_subnets])
 pulumi.export("public_route_table_id", public_route_table.id)
 pulumi.export("private_route_table_id", private_route_table.id)
-pulumi.export("public_ec2_instance_ids", [instance.id for instance in public_ec2_instances])
-pulumi.export("public_ec2_ip", [instance.public_ip for instance in public_ec2_instances])
+pulumi.export("public_ec2_instance_ids", instance.id )
+pulumi.export("public_ec2_ip", instance.public_ip )
+# pulumi.export("public_ec2_instance_ids", [instance.id for instance in public_ec2_instances])
+# pulumi.export("public_ec2_ip", [instance.public_ip for instance in public_ec2_instances])
+'''======================================'''
 

@@ -7,3 +7,5 @@ config:
   iac-pulumi:volume_size: 25
   iac-pulumi:volume_type: 'gp2'
   iac-pulumi:subnet_prefix_length: 24
+  iac-pulumi:dbuser: 'csye6225'
+  iac-pulumi:dbpass: 'Laptop>300'
