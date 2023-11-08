@@ -1,7 +1,7 @@
 # """An AWS Python Pulumi program"""
 
 import pulumi
-from pulumi_aws import ec2, get_availability_zones, iam
+from pulumi_aws import ec2, get_availability_zones, iam, route53
 import ipaddress
 from pulumi_aws import ec2, secretsmanager,ssm
 import subprocess
@@ -26,8 +26,8 @@ ec2_key_name= "ec2-deployer4"
 public_subnets = []
 private_subnets = []
 
-db_user=int(pulumi.Config("iac-pulumi").require("dbuser"))
-db_pass=int(pulumi.Config("iac-pulumi").require("dbpass"))
+db_user=pulumi.Config("iac-pulumi").require("dbuser")
+db_pass=pulumi.Config("iac-pulumi").require("dbpass")
 # db_user="csye6225"
 # db_pass="Laptop>300"
 
@@ -38,15 +38,30 @@ azs = get_availability_zones(state="available")
 actual_az_count = min(len(azs.names), 3)
 
 num_subnets = actual_az_count * 2
-
+subdomain="demo"
 
 # subnet_prefix_length = int(vpc_cidr.split("/")[1]) + num_subnets
 def get_userdata_script():
     
     user_data_script = """#!/bin/bash
-        
-        
-        
+
+        . /home/admin/cs_env/bin/activate
+
+        # sudo systemctl daemon-reload
+
+        sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/cloudwatch-config.json -s
+        sudo systemctl enable amazon-cloudwatch-agent
+        sudo systemctl start amazon-cloudwatch-agent
+
+        sudo systemctl restart amazon-cloudwatch-agent
+        # sudo systemctl enable amazon-cloudwatch-agent.service
+
+        sudo systemctl enable csye6225
+        sudo systemctl start csye6225
+        # sudo systemctl status csye6225
+
+        # sudo service start amazon-cloudwatch-agent 
+               
         """
     return user_data_script
 
@@ -156,6 +171,11 @@ def getIAMInstanceRole():
                                                       role=ec2_role.name,
                                                       policy_arn=policy.arn
                                                       )
+
+    cloudwatch_agent_policy_attachment = iam.RolePolicyAttachment("cloudwatch-agent-policy-attachment",
+    role=ec2_role.name,
+    policy_arn="arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy")
+    
     return instance_profile
 
 def getKeyPair():
@@ -369,12 +389,6 @@ database_security_group = createdbSecurityGroup()
 db = postgres_db.Database(name="csye6225", username=db_user, password=db_pass,
                           security_group_id=database_security_group.id, private_subnets=private_subnets)
 
-#create secrets for database properties
-
-# user_data_script = db.rds_instance.endpoint.apply(lambda host: f"""
-#                     #!/bin/bash
-#                     echo 'export DB_HOST={host}' >> /etc/environment
-#                     """)
 
 db_end_point = secretsmanager.Secret("db_end_point",
                                    name="csye2023_db_end_point",
@@ -407,7 +421,6 @@ db_pass_secret_version = secretsmanager.SecretVersion("db_master_pass",
                                                   )
 
 
-
 '''To create EC2 instances in all public subnets'''
 public_ec2_instances = []
 instance_profile = getIAMInstanceRole()
@@ -432,19 +445,16 @@ for i, public_subnet in enumerate(public_subnets):
                             )
     public_ec2_instances.append(instance)
 
-# instance = ec2.Instance(public_subnets[0].availability_zone+"_Instance",
-#                             ami=ami_id,
-#                             key_name=key_pair.key_name,
-#                             instance_type=instance_type,
-#                             subnet_id=public_subnets[0],
-#                             vpc_security_group_ids=[application_security_group.id],
-#                             root_block_device=ec2.InstanceRootBlockDeviceArgs(
-#                                 volume_size=root_volume_size,
-#                                 volume_type=root_volume_type,
-#                                 delete_on_termination=True,
-#                             ),
-#                             tags={"Name": public_subnets[0].availability_zone+" instance"},
-#                             )
+# hostedzone= "Z0676186FVDWJZOR1MH4" #dev
+hostedzone='Z025470929G96ACB83BAB'#demo
+# Create a Route53 Record Set
+record_set = route53.Record("my-csye-record",
+    zone_id=hostedzone,  
+    name=f"www.{subdomain}.vyshnavi2024.me",  
+    type="A",
+    ttl=60,
+    records=[instance.public_ip],
+)
 
 # # Export VPC ID, public subnets and private subnets IDs for reference in other stacks or scripts
 pulumi.export("vpc_id", vpc.id)
