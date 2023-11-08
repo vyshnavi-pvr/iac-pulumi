@@ -28,6 +28,7 @@ private_subnets = []
 
 db_user=pulumi.Config("iac-pulumi").require("dbuser")
 db_pass=pulumi.Config("iac-pulumi").require("dbpass")
+url=pulumi.Config("iac-pulumi").require("url")
 # db_user="csye6225"
 # db_pass="Laptop>300"
 
@@ -445,12 +446,13 @@ for i, public_subnet in enumerate(public_subnets):
                             )
     public_ec2_instances.append(instance)
 
+hostedzone= route53.get_zone(name=url)
 # hostedzone= "Z0676186FVDWJZOR1MH4" #dev
-hostedzone='Z025470929G96ACB83BAB'#demo
+# hostedzone='Z025470929G96ACB83BAB'#demo
 # Create a Route53 Record Set
 record_set = route53.Record("my-csye-record",
     zone_id=hostedzone,  
-    name=f"www.{subdomain}.vyshnavi2024.me",  
+    name=url,  
     type="A",
     ttl=60,
     records=[instance.public_ip],
