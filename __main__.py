@@ -51,8 +51,8 @@ def get_userdata_script():
         # sudo systemctl daemon-reload
 
         sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/cloudwatch-config.json -s
-        sudo systemctl enable amazon-cloudwatch-agent
-        sudo systemctl start amazon-cloudwatch-agent
+        # sudo systemctl enable amazon-cloudwatch-agent
+        # sudo systemctl start amazon-cloudwatch-agent
 
         sudo systemctl restart amazon-cloudwatch-agent
         # sudo systemctl enable amazon-cloudwatch-agent.service
@@ -451,7 +451,7 @@ hostedzone= route53.get_zone(name=url)
 # hostedzone='Z025470929G96ACB83BAB'#demo
 # Create a Route53 Record Set
 record_set = route53.Record("my-csye-record",
-    zone_id=hostedzone,  
+    zone_id=hostedzone.id,  
     name=url,  
     type="A",
     ttl=60,
