@@ -1,14 +1,15 @@
 # """An AWS Python Pulumi program"""
 
 import pulumi
-from pulumi_aws import ec2, get_availability_zones, iam, route53
+from pulumi_aws import ec2, get_availability_zones, iam, route53, autoscaling, lb, cloudwatch
 import ipaddress
 from pulumi_aws import ec2, secretsmanager,ssm
 import subprocess
 import os
 import postgres_db
+import base64
 
-# ami_id = 'ami-08c92838631c75988'
+
 
 '''======================================'''
 is_debug = False
@@ -39,7 +40,7 @@ azs = get_availability_zones(state="available")
 actual_az_count = min(len(azs.names), 3)
 
 num_subnets = actual_az_count * 2
-subdomain="demo"
+# subdomain="demo"
 
 # subnet_prefix_length = int(vpc_cidr.split("/")[1]) + num_subnets
 def get_userdata_script():
@@ -48,13 +49,14 @@ def get_userdata_script():
 
         . /home/admin/cs_env/bin/activate
 
-        # sudo systemctl daemon-reload
+        sudo systemctl daemon-reload
 
         sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/cloudwatch-config.json -s
-        # sudo systemctl enable amazon-cloudwatch-agent
-        # sudo systemctl start amazon-cloudwatch-agent
+        sudo systemctl enable amazon-cloudwatch-agent
+        sudo systemctl start amazon-cloudwatch-agent
+        # sudo systemctl stop amazon-cloudwatch-agent
 
-        sudo systemctl restart amazon-cloudwatch-agent
+        # sudo systemctl restart amazon-cloudwatch-agent
         # sudo systemctl enable amazon-cloudwatch-agent.service
 
         sudo systemctl enable csye6225
@@ -239,85 +241,78 @@ def getKeyPair():
     return key_pair
 
 
+def createLoadBalancerSecurityGroup():
+    # Create a security group for the load balancer
+    load_balancer_security_group = ec2.SecurityGroup(
+        "loadBalancerSecurityGroup",
+        description="Security group for the load balancer",
+        vpc_id=vpc.id,
+        ingress=[
+            ec2.SecurityGroupIngressArgs(
+                from_port=80,
+                to_port=80,
+                protocol="tcp",
+                cidr_blocks=["0.0.0.0/0"],
+            ),
+            ec2.SecurityGroupIngressArgs(
+                from_port=443,
+                to_port=443,
+                protocol="tcp",
+                cidr_blocks=["0.0.0.0/0"],
+            ),
+        ],
+
+        egress=[ # Allowing all outbound traffic
+        ec2.SecurityGroupEgressArgs(
+            protocol='-1',
+            from_port=0,
+            to_port=0,
+            cidr_blocks=['0.0.0.0/0'],
+        ),
+        
+    ],
+
+        tags={"Name": "load_balancer_security_group"},
+    )
+
+    return load_balancer_security_group
+
+
 def createSecurityGroup():
     # # Create a security group for the EC2 instances
     application_security_group = ec2.SecurityGroup("application_security_group",
-                                                   description="Security group for web application EC2 instances",
-                                                   vpc_id=vpc.id,
-                                                   tags={"Name": "application_security_group"}
-                                                   # Customize the tags as needed
-                                                   )
-    # Define ingress rules to allow TCP traffic on specified ports
-    ingress_rules = [
+        description="Security group for web application EC2 instances",
+        vpc_id=vpc.id,
+
+        ingress=[
+        # SSH (Port 22)
         ec2.SecurityGroupIngressArgs(
             from_port=22,
             to_port=22,
             protocol="tcp",
-            cidr_blocks=["0.0.0.0/0"],  # Customize the source IP range as needed
+            security_groups=[load_balancer_secrurity_group.id], # only allow traffic from the load balancer security group
         ),
-        ec2.SecurityGroupIngressArgs(
-            from_port=80,
-            to_port=80,
-            protocol="tcp",
-            cidr_blocks=["0.0.0.0/0"],  # Customize the source IP range as needed
-        ),
-        ec2.SecurityGroupIngressArgs(
-            from_port=443,
-            to_port=443,
-            protocol="tcp",
-            cidr_blocks=["0.0.0.0/0"],  # Customize the source IP range as needed
-        ),
+        # Application Port (Port 8080)
         ec2.SecurityGroupIngressArgs(
             from_port=8001,
             to_port=8001,
             protocol="tcp",
-            cidr_blocks=["0.0.0.0/0"],  # Customize the source IP range as needed
-        ),
-    ]
-
-    egress_rules=[
-        # Allow all outbound traffic to all IP addresses on HTTP port 80
-        ec2.SecurityGroupEgressArgs(
-            protocol="tcp",
-            from_port=80,
-            to_port=80,
-            cidr_blocks=["0.0.0.0/0"]
-        ),
-        # Allow all outbound traffic to all IP addresses on HTTPS port 443
-        ec2.SecurityGroupEgressArgs(
-            protocol="tcp",
-            from_port=443,
-            to_port=443,
-            cidr_blocks=["0.0.0.0/0"]
-        ),
-        ec2.SecurityGroupEgressArgs(
-            protocol="tcp",
-            from_port=5432,
-            to_port=5432,
-            cidr_blocks=["0.0.0.0/0"]
+            security_groups=[load_balancer_secrurity_group.id], # only allow traffic from the load balancer security group
         )
-    ]
+    ],
 
-    # # Attach the ingress rules to the security group
-    for ingress_rule in ingress_rules:
-        ec2.SecurityGroupRule(f"application-sg-rule-{ingress_rule.from_port} ",
-                              security_group_id=application_security_group.id,
-                              type="ingress",
-                              from_port=ingress_rule.from_port,
-                              to_port=ingress_rule.to_port,
-                              protocol=ingress_rule.protocol,
-                              cidr_blocks=ingress_rule.cidr_blocks,
-                              )
+        egress=[
+        {
+            'protocol': '-1',
+            'from_port': 0,
+            'to_port': 0,
+            'cidr_blocks': ['0.0.0.0/0'],
+        },
+    ],
+        tags={"Name": "application_security_group"}
+        # Customize the tags as needed   
+        )
 
-    for egress_rule in egress_rules:
-        ec2.SecurityGroupRule(f"application-sg-egress-rule-{egress_rule.from_port} ",
-                              security_group_id=application_security_group.id,
-                              type="egress",
-                              from_port=egress_rule.from_port,
-                              to_port=egress_rule.to_port,
-                              protocol=egress_rule.protocol,
-                              cidr_blocks=egress_rule.cidr_blocks,
-                              )
 
     return application_security_group
 
@@ -350,6 +345,7 @@ def createdbSecurityGroup():
 
 
 
+
 # Create a new VPC
 vpc = ec2.Vpc("my-vpc-1",
               cidr_block=vpc_cidr,
@@ -379,6 +375,8 @@ public_route = ec2.Route("public-route",
 
 createSubnets()
 
+load_balancer_secrurity_group= createLoadBalancerSecurityGroup()
+
 application_security_group = createSecurityGroup()
 
 ami_id = getLatestAMI()
@@ -387,9 +385,10 @@ key_pair = getKeyPair()
 
 database_security_group = createdbSecurityGroup()
 
+encoded_user_data = base64.b64encode(get_userdata_script().encode()).decode()
+
 db = postgres_db.Database(name="csye6225", username=db_user, password=db_pass,
                           security_group_id=database_security_group.id, private_subnets=private_subnets)
-
 
 db_end_point = secretsmanager.Secret("db_end_point",
                                    name="csye2023_db_end_point",
@@ -425,28 +424,163 @@ db_pass_secret_version = secretsmanager.SecretVersion("db_master_pass",
 '''To create EC2 instances in all public subnets'''
 public_ec2_instances = []
 instance_profile = getIAMInstanceRole()
-public_subnets = public_subnets[:1]
-for i, public_subnet in enumerate(public_subnets):
-    # print(public_subnet)
-    instance_name = f"public-instance-{i}"
-    instance = ec2.Instance(instance_name,
-                            ami=ami_id,
-                            key_name=key_pair.key_name,
-                            instance_type=instance_type,
-                            subnet_id=public_subnet.id,
-                            vpc_security_group_ids=[application_security_group.id],
-                            root_block_device=ec2.InstanceRootBlockDeviceArgs(
-                                volume_size=root_volume_size,
-                                volume_type=root_volume_type,
-                                delete_on_termination=True,
-                            ),
-                            user_data=get_userdata_script(),
-                            iam_instance_profile=instance_profile.name,
-                            tags={"Name": instance_name},
-                            )
-    public_ec2_instances.append(instance)
+
+
+# Create a load balancer
+load_balancer = lb.LoadBalancer(
+    "my-loadbalancer",
+    internal = False,
+    security_groups = [load_balancer_secrurity_group.id],
+    subnets = [public_subnet.id for public_subnet  in public_subnets],
+    load_balancer_type="application",
+    enable_deletion_protection=False,
+    tags={"Name": "LoadBalancer_CSYE6225"},
+)
+
+# Create a default target group to handle HTTP traffic on port 8080
+target_group = lb.TargetGroup(
+    "my-targetgroup",
+    port = 8001,
+    protocol = "HTTP",
+    vpc_id = vpc.id,
+    target_type="instance",
+    health_check={
+            "enabled": True,
+            "path": "/healthz",  
+            "protocol": "HTTP",
+            "port": "8001",
+            "interval": 30,
+            "timeout": 5,
+            "healthy_threshold": 2,
+            "unhealthy_threshold": 2,
+        },
+        tags={
+            "Name": "TargetGroup_CSYE6225",
+        }
+    )
+
+listener = lb.Listener(
+    "my-listener",
+    load_balancer_arn = load_balancer.arn,
+    port = 80,
+    protocol="HTTP",
+    default_actions = [lb.ListenerDefaultActionArgs(
+        type="forward",
+        target_group_arn=target_group.arn
+    )]
+)
+
 
 hostedzone= route53.get_zone(name=url)
+loadbalancerdnsname = load_balancer.dns_name
+
+
+block_device_mappings=ec2.LaunchTemplateBlockDeviceMappingArgs(
+    device_name="/dev/xvda",
+    ebs=ec2.LaunchTemplateBlockDeviceMappingEbsArgs(
+        volume_size=root_volume_size,
+        volume_type=root_volume_type,
+        delete_on_termination=True,
+    )
+)
+
+tag_specifications= ec2.LaunchTemplateTagSpecificationArgs(
+    resource_type="instance",
+    tags={
+        "Name": "autoScalingGroupInstance",
+    }
+)
+# Create launch template
+launch_template = ec2.LaunchTemplate(
+    "web-app-launch-template",
+    description="Launch template for web application instances",
+    image_id=ami_id,  
+    instance_type=instance_type,
+    key_name=key_pair.key_name,  
+    network_interfaces=[{
+            "associate_public_ip_address": True,
+            "security_groups": [application_security_group.id],
+        }],
+    iam_instance_profile=ec2.LaunchTemplateIamInstanceProfileArgs(
+        name=instance_profile.name,  
+    ),
+    user_data=encoded_user_data, 
+    block_device_mappings= [block_device_mappings],
+    tag_specifications= [tag_specifications], 
+
+)
+
+# vpc_zone_identifiers = [public_subnet.id for public_subnet in public_subnets[:1]]
+# public_subnets[0].id.apply(lambda id: id)
+auto_scaling_group = autoscaling.Group("autoscalingGroup",
+    desired_capacity=1,
+    min_size=1,
+    max_size=3, # Cap maximum size of the group
+    default_cooldown=60,
+    health_check_type="EC2",
+    launch_template=autoscaling.GroupLaunchTemplateArgs(
+        id=launch_template.id,
+        version="$Latest",
+    ),
+    termination_policies=["OldestInstance"],
+    vpc_zone_identifiers=[public_subnet.id for public_subnet in public_subnets], 
+    tags=[autoscaling.GroupTagArgs(
+        key="Name",
+        value="web-asg-instance",
+        propagate_at_launch=True
+    )]
+)
+scale_down_policy = autoscaling.Policy("scale_down",
+        scaling_adjustment=-1,
+        adjustment_type="ChangeInCapacity",
+        cooldown=60,
+        autoscaling_group_name=auto_scaling_group.name,
+        policy_type="SimpleScaling",
+    )
+
+
+scale_up_policy = autoscaling.Policy("scaleUpPolicy",
+    autoscaling_group_name=auto_scaling_group.name,
+    adjustment_type="ChangeInCapacity",
+    scaling_adjustment=1,  
+    cooldown=60,         
+    policy_type="SimpleScaling",
+)
+
+# Create the scale up policy
+cpu_utilization_high_alarm = cloudwatch.MetricAlarm("cpuUtilizationHighAlarm",
+    metric_name="CPUUtilization",
+    namespace="AWS/EC2",
+    statistic="Average",
+    comparison_operator="GreaterThanOrEqualToThreshold",
+    evaluation_periods=2,
+    period=120,
+    alarm_description="This metric checks cpu utilization",
+    alarm_actions=[scale_up_policy.arn],
+    dimensions= { "AutoScalingGroupName": auto_scaling_group.name },
+    threshold=5, 
+    
+)
+cpu_utilization_low_alarm = cloudwatch.MetricAlarm("cpuUtilizationLowAlarm",
+    metric_name="CPUUtilization",
+    namespace="AWS/EC2",
+    statistic="Average",
+    comparison_operator="LessThanOrEqualToThreshold",
+    evaluation_periods=2,
+    period=120,
+    alarm_description="This metric checks cpu utilization",
+    alarm_actions=[scale_down_policy.arn],
+    dimensions={ "AutoScalingGroupName": auto_scaling_group.name },
+    threshold=3, 
+    
+)
+
+# # register instances in the autoscaling group
+# autoscaling_attachment = autoscaling.Attachment('autoscaling_attachment',
+#     autoscaling_group_name=auto_scaling_group.name, 
+#     lb_target_group_arn =target_group.arn
+# )
+
 # hostedzone= "Z0676186FVDWJZOR1MH4" #dev
 # hostedzone='Z025470929G96ACB83BAB'#demo
 # Create a Route53 Record Set
@@ -454,8 +588,13 @@ record_set = route53.Record("my-csye-record",
     zone_id=hostedzone.id,  
     name=url,  
     type="A",
-    ttl=60,
-    records=[instance.public_ip],
+    aliases=[
+        route53.RecordAliasArgs(
+            name=load_balancer.dns_name,
+            zone_id=load_balancer.zone_id,
+            evaluate_target_health=True
+        )
+    ]
 )
 
 # # Export VPC ID, public subnets and private subnets IDs for reference in other stacks or scripts
@@ -464,8 +603,8 @@ pulumi.export("public_subnets_ids", [subnet.id for subnet in public_subnets])
 pulumi.export("private_subnets_ids", [subnet.id for subnet in private_subnets])
 pulumi.export("public_route_table_id", public_route_table.id)
 pulumi.export("private_route_table_id", private_route_table.id)
-pulumi.export("public_ec2_instance_ids", instance.id )
-pulumi.export("public_ec2_ip", instance.public_ip )
+# pulumi.export("public_ec2_instance_ids", instance.id )
+# pulumi.export("public_ec2_ip", instance.public_ip )
 # pulumi.export("public_ec2_instance_ids", [instance.id for instance in public_ec2_instances])
 # pulumi.export("public_ec2_ip", [instance.public_ip for instance in public_ec2_instances])
 '''======================================'''
