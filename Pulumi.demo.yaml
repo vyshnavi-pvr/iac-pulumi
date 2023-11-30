@@ -1,4 +1,4 @@
-oencryptionsalt: v1:/V/VSRvCfZ0=:v1:qtHGaC2SfP0a+z8n:jb+nlrkfJnfm3b7tPyT9ZZqnmswmnw==
+encryptionsalt: v1:/V/VSRvCfZ0=:v1:qtHGaC2SfP0a+z8n:jb+nlrkfJnfm3b7tPyT9ZZqnmswmnw==
 config:
   aws:region: us-east-1
   iac-pulumi:name: demo
