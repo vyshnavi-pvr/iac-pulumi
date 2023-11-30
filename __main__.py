@@ -1,13 +1,12 @@
-# """An AWS Python Pulumi program"""
-
+import json
 import pulumi
-from pulumi_aws import ec2, get_availability_zones, iam, route53, autoscaling, lb, cloudwatch
+import pulumi_gcp as gcp
+from pulumi_aws import ec2, get_availability_zones, iam, route53, autoscaling, lb, cloudwatch, sns,secretsmanager,dynamodb,lambda_
 import ipaddress
 from pulumi_aws import ec2, secretsmanager,ssm
-import subprocess
-import os
 import postgres_db
 import base64
+import utils
 
 
 
@@ -22,8 +21,8 @@ instance_type = pulumi.Config("iac-pulumi").require("instance_type") #'t2.micro'
 root_volume_size =int(pulumi.Config("iac-pulumi").require("volume_size"))# 25
 root_volume_type = pulumi.Config("iac-pulumi").require("volume_type")#'gp2'
 subnet_prefix_length = int(pulumi.Config("iac-pulumi").require("subnet_prefix_length"))#24
+gcp_project_id = pulumi.Config("gcp").require("project")
 # ec2_key_name = pulumi.Config("iac-pulumi").require("key")#"ec2-deployer"
-ec2_key_name= "ec2-deployer4"
 public_subnets = []
 private_subnets = []
 
@@ -43,36 +42,6 @@ num_subnets = actual_az_count * 2
 # subdomain="demo"
 
 # subnet_prefix_length = int(vpc_cidr.split("/")[1]) + num_subnets
-def get_userdata_script():
-    
-    user_data_script = """#!/bin/bash
-
-        . /home/admin/cs_env/bin/activate
-
-        sudo systemctl daemon-reload
-
-        sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/cloudwatch-config.json -s
-        sudo systemctl enable amazon-cloudwatch-agent
-        sudo systemctl start amazon-cloudwatch-agent
-        # sudo systemctl stop amazon-cloudwatch-agent
-
-        # sudo systemctl restart amazon-cloudwatch-agent
-        # sudo systemctl enable amazon-cloudwatch-agent.service
-
-        sudo systemctl enable csye6225
-        sudo systemctl start csye6225
-        # sudo systemctl status csye6225
-
-        # sudo service start amazon-cloudwatch-agent 
-               
-        """
-    return user_data_script
-
-
-
-def calculate_subnets(vpc_cidr, subnet_prefix_length):
-    """Calculate subnets based on VPC CIDR and desired subnet prefix length."""
-    return [str(subnet) for subnet in ipaddress.ip_network(vpc_cidr).subnets(new_prefix=subnet_prefix_length)]
 
 
 def getLatestAMI():
@@ -85,6 +54,13 @@ def getLatestAMI():
     )
     print(f"AMI Id: {ami.id}, AMI Name: {ami.name}")
     return ami.id
+
+
+
+def calculate_subnets(vpc_cidr, subnet_prefix_length):
+    """Calculate subnets based on VPC CIDR and desired subnet prefix length."""
+    return [str(subnet) for subnet in ipaddress.ip_network(vpc_cidr).subnets(new_prefix=subnet_prefix_length)]
+
 
 
 def createSubnets():
@@ -131,115 +107,6 @@ def createSubnets():
                                   subnet_id=private_subnet.id,
                                   route_table_id=private_route_table.id,
                                   )
-def getIAMInstanceRole():
-
-    # Create an IAM role
-    ec2_role = iam.Role("csye2023-instance-role",
-                        assume_role_policy="""{
-            "Version": "2012-10-17",
-            "Statement": [{
-                "Action": "sts:AssumeRole",
-                "Effect": "Allow",
-                "Sid": "",
-                "Principal": {
-                    "Service": "ec2.amazonaws.com"
-                }
-            }]
-        }"""
-                        )
-
-    # Create an instance profile
-    instance_profile = iam.InstanceProfile("csye2023-instance-role_profile",
-                                           role=ec2_role.name
-                                           )
-
-    # 2. Attach a policy to the role that grants access to Secrets Manager
-    policy = iam.Policy("csye2023-secrets-policy",
-                        description="A policy that grants access to Secrets Manager",
-                        policy=pulumi.Output.from_input({
-                            "Version": "2012-10-17",
-                            "Statement": [{
-                                "Action": [
-                                    "secretsmanager:GetSecretValue",
-                                    "secretsmanager:DescribeSecret"
-                                ],
-                                "Resource": "*",
-                                "Effect": "Allow"
-                            }]
-                        })
-                        )
-
-    # Attach the policy to the role
-    role_policy_attachment = iam.RolePolicyAttachment("secrets-policy-attachment",
-                                                      role=ec2_role.name,
-                                                      policy_arn=policy.arn
-                                                      )
-
-    cloudwatch_agent_policy_attachment = iam.RolePolicyAttachment("cloudwatch-agent-policy-attachment",
-    role=ec2_role.name,
-    policy_arn="arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy")
-    
-    return instance_profile
-
-def getKeyPair():
-
-    print("Creating Key pair *************** ")
-    key_filename = ec2_key_name
-    pub_key_secret_name = "ec2-deployer-public-key5"
-    private_key_secret_name = "ec2-deployer-private-key5"
-    public_key = None
-    try:
-
-        public_secret = secretsmanager.get_secret_version(secret_id=pub_key_secret_name)
-        private_secret = secretsmanager.get_secret_version(secret_id=private_key_secret_name)
-        # Use the apply method to print the secret value
-        public_key = public_secret.secret_string
-        private_key = private_secret.secret_string
-        print(f"retrived pub key {public_key}")
-    except:
-        print ("Public key not exists!")
-
-    if not public_key:
-        # Generate a new RSA key pair
-        subprocess.run(["ssh-keygen", "-t", "rsa", "-b", "4096", "-f", key_filename, "-N", ""])
-
-        # Read and print the content of the public key file
-        with open(f"{key_filename}.pub", "r") as file:
-            public_key = file.read()
-
-        # Read keys into variables if needed
-        with open(f"{key_filename}", "r") as file:
-            private_key = file.read()
-
-        # Remove key material from machine
-        os.remove(f"{key_filename}")
-        os.remove(f"{key_filename}.pub")
-
-    key_pair = ec2.KeyPair(resource_name=ec2_key_name, key_name=ec2_key_name, public_key=public_key)
-    pulumi.export('publicKey', key_pair.public_key)
-
-    pub_secret = secretsmanager.Secret("ec2-deployer-public-key5",
-                                       name="ec2-deployer-public-key5",
-                                       description="public key for deployer EC2 key pair"
-                                       )
-
-    pub_secret_version = secretsmanager.SecretVersion("ec2-deployer-public-secret-version",
-                                                  secret_id=pub_secret.id,
-                                                  secret_string=public_key
-                                                  )
-
-    private_secret = secretsmanager.Secret("ec2-deployer-private-key5",
-                                           name="ec2-deployer-private-key5",
-                                           description="Private key for deployer EC2 key pair"
-                                           )
-
-    private_secret_version = secretsmanager.SecretVersion("ec2-deployer-private-secret-version",
-                                                  secret_id=private_secret.id,
-                                                  secret_string=private_key
-                                                  )
-
-    return key_pair
-
 
 def createLoadBalancerSecurityGroup():
     # Create a security group for the load balancer
@@ -380,12 +247,12 @@ load_balancer_secrurity_group= createLoadBalancerSecurityGroup()
 application_security_group = createSecurityGroup()
 
 ami_id = getLatestAMI()
-
-key_pair = getKeyPair()
+print(f"********* AMI ID: {ami_id}")
+key_pair = utils.getKeyPair()
 
 database_security_group = createdbSecurityGroup()
 
-encoded_user_data = base64.b64encode(get_userdata_script().encode()).decode()
+encoded_user_data = base64.b64encode(utils.get_userdata_script().encode()).decode()
 
 db = postgres_db.Database(name="csye6225", username=db_user, password=db_pass,
                           security_group_id=database_security_group.id, private_subnets=private_subnets)
@@ -423,7 +290,7 @@ db_pass_secret_version = secretsmanager.SecretVersion("db_master_pass",
 
 '''To create EC2 instances in all public subnets'''
 public_ec2_instances = []
-instance_profile = getIAMInstanceRole()
+instance_profile = utils.getIAMInstanceRole()
 
 
 # Create a load balancer
@@ -449,7 +316,7 @@ target_group = lb.TargetGroup(
             "path": "/healthz",  
             "protocol": "HTTP",
             "port": "8001",
-            "interval": 30,
+            "interval": 15,
             "timeout": 5,
             "healthy_threshold": 2,
             "unhealthy_threshold": 2,
@@ -575,10 +442,12 @@ cpu_utilization_low_alarm = cloudwatch.MetricAlarm("cpuUtilizationLowAlarm",
     
 )
 
+# tg_attachments =lb.TargetGroupAttachment(resource_name="tg_attachments",target_group_arn=target_group.arn,auto_scaling_group=auto_scaling_group.name)
+
 # # register instances in the autoscaling group
 # autoscaling_attachment = autoscaling.Attachment('autoscaling_attachment',
 #     autoscaling_group_name=auto_scaling_group.name, 
-#     lb_target_group_arn =target_group.arn
+#     lb_target_group_arn =load_balancer.arn
 # )
 
 # hostedzone= "Z0676186FVDWJZOR1MH4" #dev
@@ -597,6 +466,147 @@ record_set = route53.Record("my-csye-record",
     ]
 )
 
+
+
+
+def serialize(obj):
+    return obj.__str__
+
+sns_topic = sns.Topic("csye_topic")
+
+sns_topic_param = ssm.Parameter("csye_topic",
+    type="String",
+    value= sns_topic.arn)
+
+
+
+service_account = gcp.serviceaccount.Account('csye-service-account',
+    project=gcp_project_id,
+    account_id='csye-service-account',
+    display_name='CSYE Service Account')
+
+service_account_key = gcp.serviceaccount.Key('csye-service-account-key',
+    service_account_id=service_account.name,
+    )
+
+bucket = gcp.storage.Bucket("csye-mybucket", location="us-east1", project=gcp_project_id)
+# pulumi.export("service_account.email", service_account.email)
+# print("******************SERVice email", service_account.email)
+# bucket_acl = gcp.storage.BucketACL("bucket_acl",
+#     bucket=bucket.name,
+#     role_entities=[
+#         f"OWNER:{service_account.email}"
+#     ])
+
+json_key= service_account_key
+print(f"json key {json_key}")
+# Store Google Service Account access keys in Secrets Manager
+google_credentials = secretsmanager.Secret("gcs_cred",
+                                       name="gcs_cred",
+                                       description="gcp credentials",
+                                       )
+
+gcp_cred_secret = secretsmanager.SecretVersion("gcs_cred",
+                                                  secret_id=google_credentials.id,
+                                                  secret_string=service_account_key
+                                                  )
+
+
+
+# Create a DynamoDB table for the Lambda Function
+dynamodb_table = dynamodb.Table('csye-email-table',
+    attributes=[{
+        'name': 'id',
+        'type': 'S',
+    }],
+    hash_key='id',
+    billing_mode='PAY_PER_REQUEST')
+
+lambda_role = iam.Role('lambda-role',
+    assume_role_policy=iam.get_policy_document(statements=[{
+        'actions': ['sts:AssumeRole'],
+        'principals': [{
+            'identifiers': ['lambda.amazonaws.com'],
+            'type': 'Service',
+        }],
+    }]).json)
+
+# Create an IAM policy that grants the Lambda function access to the necessary services
+lambda_policy = iam.RolePolicy('lambda-policy',
+    role=lambda_role.id,
+    policy=pulumi.Output.all( dynamodb_table.name, google_credentials.arn).apply(
+        lambda args: iam.get_policy_document(statements=[{
+            'actions': [
+                's3:ListBucket',
+                's3:GetObject',
+                's3:PutObject',
+                'dynamodb:*',
+                'cloudwatch:*',
+                'secretsmanager:GetSecretValue',
+            ],
+            'resources':["*"]
+            
+        }]).json
+    )
+)
+
+
+lambda_policy_cloudwatch = iam.RolePolicyAttachment("lambda-cloudwatch-policy",
+    role=lambda_role.name,
+    policy_arn="arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole")
+
+# Create a Lambda layer from the S3 bucket object
+lambda_layer = lambda_.LayerVersion(
+    'lambda_layer',
+    code=pulumi.FileArchive('./app_layers.zip'),
+    # code=aws.lambda_.LayerVersionCodeArgs(
+    #     s3_bucket=s3_bucket.id,
+    #     s3_key=bucket_object.key  # reference the uploaded ZIP file
+    # ),
+    layer_name='my-lambda-layer',
+    compatible_runtimes=["python3.9"]  # replace with all Python runtimes that your modules are compatible with
+)
+# Create the Lambda function
+lambda_function = lambda_.Function('csye-lambda-function',
+    role=lambda_role.arn,
+    runtime='python3.9',
+    handler='serverless.lambda_handler',
+    code=pulumi.FileArchive('./app.zip'),
+    timeout=30,
+    environment={
+        'variables': {
+            'GOOGLE_CREDENTIALS_SECRET_ARN': google_credentials.arn,
+            'BUCKET_NAME': bucket.name,
+            'DYNAMODB_TABLE_NAME': dynamodb_table.name,
+            
+        }
+    },
+    layers=[lambda_layer.arn],
+    )
+
+# Lambda function subscription on the SNS Topic
+sns_subscription = sns.TopicSubscription('snsSubscription',
+    endpoint=lambda_function.arn,
+    topic=sns_topic.arn,
+    protocol='lambda'
+    
+)
+
+# Allow the SNS topic to trigger the Lambda function
+lambda_permission = lambda_.Permission('my_lambda_permission',
+    action='lambda:InvokeFunction',
+    function=lambda_function.name,
+    principal='sns.amazonaws.com',
+    source_arn=sns_topic.arn,
+)
+# # Providing the Lambda function with permissions to be invoked by the SNS service
+# lambda_permission = lambda_.Permission('lambdaPermission',
+#     action='lambda:InvokeFunction',
+#     function_=lambda_function.name,
+#     principal='sns.amazonaws.com',
+#     source_arn=sns_topic.arn
+# )
+
 # # Export VPC ID, public subnets and private subnets IDs for reference in other stacks or scripts
 pulumi.export("vpc_id", vpc.id)
 pulumi.export("public_subnets_ids", [subnet.id for subnet in public_subnets])
@@ -608,4 +618,3 @@ pulumi.export("private_route_table_id", private_route_table.id)
 # pulumi.export("public_ec2_instance_ids", [instance.id for instance in public_ec2_instances])
 # pulumi.export("public_ec2_ip", [instance.public_ip for instance in public_ec2_instances])
 '''======================================'''
-
