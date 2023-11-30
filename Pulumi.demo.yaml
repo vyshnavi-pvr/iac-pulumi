@@ -1,12 +1,14 @@
 encryptionsalt: v1:/V/VSRvCfZ0=:v1:qtHGaC2SfP0a+z8n:jb+nlrkfJnfm3b7tPyT9ZZqnmswmnw==
 config:
   aws:region: us-east-1
-  iac-pulumi:name: demo
-  iac-pulumi:vpcCidr: '16'
-  iac-pulumi:instance_type: t2.micro
-  iac-pulumi:volume_size: 25
-  iac-pulumi:volume_type: 'gp2'
-  iac-pulumi:subnet_prefix_length: 24
-  iac-pulumi:dbuser: 'csye6225'
+  gcp:project: abiding-cycle-406523
+  gcp:region: us-east1
   iac-pulumi:dbpass: 'Laptop>300'
+  iac-pulumi:dbuser: 'csye6225'
+  iac-pulumi:instance_type: t2.micro
+  iac-pulumi:name: demo
+  iac-pulumi:subnet_prefix_length: "24"
   iac-pulumi:url: 'demo.vyshnavi2024.me'
+  iac-pulumi:volume_size: "25"
+  iac-pulumi:volume_type: 'gp2'
+  iac-pulumi:vpcCidr: '16'
