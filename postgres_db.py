@@ -34,17 +34,11 @@ class Database(pulumi.ComponentResource):
             storage_type="gp2",
             username=username, 
             password=password,
-            vpc_security_group_ids=[security_group_id],  # replace with actual VPC security group ID(s)
-            db_subnet_group_name=self.db_subnet_group.name,  # replace with actual DB Subnet group name
+            vpc_security_group_ids=[security_group_id],  
+            db_subnet_group_name=self.db_subnet_group.name,  
             parameter_group_name=self.parameter_group.id,
             delete_automated_backups=True, 
             skip_final_snapshot = True,
             deletion_protection=False,
         )
 
-# # Export the name and address of the RDS instance
-# pulumi.export("dbInstanceName", rds_instance.name)
-# pulumi.export("dbInstanceAddress", rds_instance.address)
-
-# # Export the parameter group ID for use in other resources or programs
-# pulumi.export("parameter_group_id", parameter_group.id)
