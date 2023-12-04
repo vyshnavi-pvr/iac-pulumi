@@ -3,17 +3,19 @@
 import pulumi
 from pulumi_aws import ec2, get_availability_zones, iam, route53, autoscaling, lb, cloudwatch, sns
 import ipaddress
-from pulumi_aws import ec2, secretsmanager,ssm
+from pulumi_aws import ec2, secretsmanager, ssm
 import subprocess
 import os
 
 '''======================================'''
 is_debug = False
 # ec2_key_name = pulumi.Config("iac-pulumi").require("key")#"ec2-deployer"
-ec2_key_name= "ec2-deployer4"
+ec2_key_name = "ec2-deployer4"
 # subnet_prefix_length = int(vpc_cidr.split("/")[1]) + num_subnets
+
+
 def get_userdata_script():
-    
+
     user_data_script = """#!/bin/bash
 
         . /home/admin/cs_env/bin/activate
@@ -38,12 +40,9 @@ def get_userdata_script():
     return user_data_script
 
 
-
 def calculate_subnets(vpc_cidr, subnet_prefix_length):
     """Calculate subnets based on VPC CIDR and desired subnet prefix length."""
     return [str(subnet) for subnet in ipaddress.ip_network(vpc_cidr).subnets(new_prefix=subnet_prefix_length)]
-
-
 
 
 def getIAMInstanceRole():
@@ -77,9 +76,8 @@ def getIAMInstanceRole():
                                 "Action": [
                                     "secretsmanager:GetSecretValue",
                                     "secretsmanager:DescribeSecret",
-                                    "ssm:GetParameters",
-                                    "ssm:DescribeParameters",
-                                    "sns:Publish"
+                                    "ssm:*",
+                                    "sns:*"
                                 ],
                                 "Resource": "*",
                                 "Effect": "Allow"
@@ -93,15 +91,16 @@ def getIAMInstanceRole():
                                                       policy_arn=policy.arn
                                                       )
     role_policy_attachment2 = iam.RolePolicyAttachment("policy-attachment2",
-                                                      role=ec2_role.name,
-                                                      policy_arn="arn:aws:iam::aws:policy/AmazonSSMFullAccess"
-                                                      )
+                                                       role=ec2_role.name,
+                                                       policy_arn="arn:aws:iam::aws:policy/AmazonSSMFullAccess"
+                                                       )
 
     cloudwatch_agent_policy_attachment = iam.RolePolicyAttachment("cloudwatch-agent-policy-attachment",
-    role=ec2_role.name,
-    policy_arn="arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy")
-    
+                                                                  role=ec2_role.name,
+                                                                  policy_arn="arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy")
+
     return instance_profile
+
 
 def getKeyPair():
 
@@ -112,18 +111,21 @@ def getKeyPair():
     public_key = None
     try:
 
-        public_secret = secretsmanager.get_secret_version(secret_id=pub_key_secret_name)
-        private_secret = secretsmanager.get_secret_version(secret_id=private_key_secret_name)
+        public_secret = secretsmanager.get_secret_version(
+            secret_id=pub_key_secret_name)
+        private_secret = secretsmanager.get_secret_version(
+            secret_id=private_key_secret_name)
         # Use the apply method to print the secret value
         public_key = public_secret.secret_string
         private_key = private_secret.secret_string
         print(f"retrived pub key {public_key}")
     except:
-        print ("Public key not exists!")
+        print("Public key not exists!")
 
     if not public_key:
         # Generate a new RSA key pair
-        subprocess.run(["ssh-keygen", "-t", "rsa", "-b", "4096", "-f", key_filename, "-N", ""])
+        subprocess.run(["ssh-keygen", "-t", "rsa", "-b",
+                       "4096", "-f", key_filename, "-N", ""])
 
         # Read and print the content of the public key file
         with open(f"{key_filename}.pub", "r") as file:
@@ -137,7 +139,8 @@ def getKeyPair():
         os.remove(f"{key_filename}")
         os.remove(f"{key_filename}.pub")
 
-    key_pair = ec2.KeyPair(resource_name=ec2_key_name, key_name=ec2_key_name, public_key=public_key)
+    key_pair = ec2.KeyPair(resource_name=ec2_key_name,
+                           key_name=ec2_key_name, public_key=public_key)
     pulumi.export('publicKey', key_pair.public_key)
 
     pub_secret = secretsmanager.Secret("ec2-deployer-public-key5",
@@ -146,9 +149,9 @@ def getKeyPair():
                                        )
 
     pub_secret_version = secretsmanager.SecretVersion("ec2-deployer-public-secret-version",
-                                                  secret_id=pub_secret.id,
-                                                  secret_string=public_key
-                                                  )
+                                                      secret_id=pub_secret.id,
+                                                      secret_string=public_key
+                                                      )
 
     private_secret = secretsmanager.Secret("ec2-deployer-private-key5",
                                            name="ec2-deployer-private-key5",
@@ -156,9 +159,8 @@ def getKeyPair():
                                            )
 
     private_secret_version = secretsmanager.SecretVersion("ec2-deployer-private-secret-version",
-                                                  secret_id=private_secret.id,
-                                                  secret_string=private_key
-                                                  )
+                                                          secret_id=private_secret.id,
+                                                          secret_string=private_key
+                                                          )
 
     return key_pair
-
