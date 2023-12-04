@@ -45,13 +45,13 @@ else:
                                   domain_name=url,
                                   validation_method="DNS",
                                   )
+    acm_cert_arn= certificate.arn
     # AWS Route53 Zone for the domain
     zone = route53.get_zone(name=url)
 
     # Find the DNS validation records
     validation_records = route53.Record("certificate_validation_dns_records",
-                                        records=[
-                                            r.value for r in certificate.domain_validation_options[0].resource_record],
+                                        records=[certificate.domain_validation_options[0].resource_record_value],
                                         name=certificate.domain_validation_options[0].resource_record_name,
                                         type=certificate.domain_validation_options[0].resource_record_type,
                                         ttl=60,
@@ -355,7 +355,7 @@ target_group = lb.TargetGroup(
         "protocol": "HTTP",
         "port": "8001",
         "interval": 15,
-        "timeout": 5,
+        "timeout": 15,
         "healthy_threshold": 2,
         "unhealthy_threshold": 2,
     },
