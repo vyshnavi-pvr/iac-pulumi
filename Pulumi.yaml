@@ -3,4 +3,4 @@ runtime:
   name: python
   options:
     virtualenv: venv
-description: A AWS Python Pulumi program for IaC
+description: A AWS Python Pulumi program for IaC for web Application
